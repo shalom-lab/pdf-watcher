@@ -19,6 +19,9 @@ var (
 
 var en = map[string]string{
 	"tray.tooltip":           "pdf-watcher: watch folder (top-level only) → Zotero",
+	"tray.tooltip.down":      "pdf-watcher — Zotero unavailable (install/open Zotero 10)",
+	"tray.zotero.ok":         "Zotero: connected",
+	"tray.zotero.down":       "Zotero: unavailable",
 	"tray.addWatch":          "Add watch folder",
 	"tray.watched":           "Watched folders",
 	"tray.pauseDir":          "Pause",
@@ -45,6 +48,9 @@ var en = map[string]string{
 
 var zh = map[string]string{
 	"tray.tooltip":           "pdf-watcher：监听文件夹（仅本层）→ Zotero",
+	"tray.tooltip.down":      "pdf-watcher — Zotero 不可用（请安装并打开 Zotero 10）",
+	"tray.zotero.ok":         "Zotero：已连接",
+	"tray.zotero.down":       "Zotero：不可用",
 	"tray.addWatch":          "添加监控文件夹",
 	"tray.watched":           "已监控目录",
 	"tray.pauseDir":          "暂停",

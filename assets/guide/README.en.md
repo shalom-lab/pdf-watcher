@@ -42,6 +42,9 @@ If the index already has the same DOI/PMID (or a long normalized title), a new f
 
 ## FAQ
 
+**Zotero not installed / not running**  
+The tray app still starts (no crash). The menu shows “Zotero: unavailable” and the tooltip explains it; once Zotero 10 is open with local API enabled, status flips to connected and queued files are processed.
+
 **No tray icon**  
 Check the overflow area (^), or kill old processes and relaunch.
 

@@ -81,6 +81,15 @@ func Run() error {
 	a := &App{cfg: cfg, log: log, idx: idx, zc: zc, exePath: exe}
 	pipe := pipeline.New(cfg.Get, log, idx, zc, res, win.TryExclusiveOpen)
 	pipe.PersistCollectionID = a.persistCollectionID
+	pipe.OnZoteroReachable = func(ok bool) {
+		if ok {
+			a.log.Info("-", "zotero", "status=connected")
+			go func() { _ = a.reconcileCollections() }()
+		} else {
+			a.log.Warn("-", "zotero", "status=unavailable (install/open Zotero 10, enable local API)")
+		}
+		a.rebuildMenu()
+	}
 	a.pipe = pipe
 	a.watch = NewWatcherHub(log, pipe)
 
@@ -107,11 +116,17 @@ func Run() error {
 
 func (a *App) onReady() {
 	systray.SetIcon(assets.Icon)
-	systray.SetTooltip(i18n.T("tray.tooltip"))
 	systray.SetOnRClick(func(menu systray.IMenu) { menu.ShowMenu() })
 	a.trayReady.Store(true)
 	a.rebuildMenu()
-	go func() { _ = a.reconcileCollections() }()
+	go func() {
+		if _, err := a.zc.Probe(); err != nil {
+			a.log.Warn("-", "zotero", "startup probe failed: "+err.Error())
+		} else {
+			a.log.Info("-", "zotero", "startup probe ok")
+			_ = a.reconcileCollections()
+		}
+	}()
 }
 
 func (a *App) onExit() {
@@ -127,9 +142,21 @@ func (a *App) rebuildMenu() {
 	a.menuMu.Lock()
 	defer a.menuMu.Unlock()
 	systray.ResetMenu()
-	systray.SetTooltip(i18n.T("tray.tooltip"))
+	zoteroOK := a.pipe != nil && a.pipe.ZoteroOK()
+	if zoteroOK {
+		systray.SetTooltip(i18n.T("tray.tooltip"))
+	} else {
+		systray.SetTooltip(i18n.T("tray.tooltip.down"))
+	}
 
 	cfg := a.cfg.Get()
+
+	statusKey := "tray.zotero.down"
+	if zoteroOK {
+		statusKey = "tray.zotero.ok"
+	}
+	systray.AddMenuItem(i18n.T(statusKey), "").Disable()
+	systray.AddSeparator()
 
 	mAdd := systray.AddMenuItem(i18n.T("tray.addWatch"), "")
 	mAdd.Click(func() { go a.addWatch() })
@@ -296,7 +323,7 @@ func (a *App) removeDir(i int) {
 
 func (a *App) exportCollectionsCSV() {
 	if _, err := a.zc.Probe(); err != nil {
-		a.log.Error("-", "collections", err.Error())
+		a.log.Error("-", "collections", "Zotero unavailable: "+err.Error())
 		return
 	}
 	cols, err := a.zc.ListCollectionsParsed()

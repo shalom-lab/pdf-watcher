@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pdf-watcher/internal/config"
@@ -24,25 +25,28 @@ type Job struct {
 }
 
 type Pipeline struct {
-	Log      *logx.Logger
-	Index    *index.Store
-	Zotero   *zotero.Client
-	Resolver *meta.Resolver
+	Log       *logx.Logger
+	Index     *index.Store
+	Zotero    *zotero.Client
+	Resolver  *meta.Resolver
 	Exclusive stable.ExclusiveOpener
 
 	getCfg func() config.Config
 	// PersistCollectionID writes Zotero collection key back into watchDirs config.
 	PersistCollectionID func(watchDir, collectionName, collectionID string)
+	// OnZoteroReachable fires when Local API reachability flips (true=up).
+	OnZoteroReachable func(ok bool)
 
-	sem       chan struct{}
-	queue     chan Job
-	inflight  sync.Map // path -> struct{}
-	keyLocks  sync.Map // assoc key -> *sync.Mutex
+	sem      chan struct{}
+	queue    chan Job
+	inflight sync.Map // path -> struct{}
+	keyLocks sync.Map // assoc key -> *sync.Mutex
 
 	pausedMu sync.RWMutex
 	paused   bool
 
-	backoff time.Duration
+	zoteroOK atomic.Bool
+	backoff  time.Duration
 }
 
 func New(getCfg func() config.Config, log *logx.Logger, idx *index.Store, zc *zotero.Client, res *meta.Resolver, excl stable.ExclusiveOpener) *Pipeline {
@@ -72,6 +76,18 @@ func (p *Pipeline) Paused() bool {
 	p.pausedMu.RLock()
 	defer p.pausedMu.RUnlock()
 	return p.paused
+}
+
+func (p *Pipeline) ZoteroOK() bool { return p.zoteroOK.Load() }
+
+func (p *Pipeline) setZoteroOK(ok bool) {
+	prev := p.zoteroOK.Swap(ok)
+	if prev == ok {
+		return
+	}
+	if p.OnZoteroReachable != nil {
+		p.OnZoteroReachable(ok)
+	}
 }
 
 func (p *Pipeline) Enqueue(job Job) {
@@ -113,9 +129,10 @@ func (p *Pipeline) probeLoop() {
 	for {
 		_, err := p.Zotero.Probe()
 		if err != nil {
+			p.setZoteroOK(false)
 			msg := err.Error()
 			if msg != lastErr {
-				p.Log.Warn("-", "zotero", msg)
+				p.Log.Warn("-", "zotero", "probe: "+msg)
 				lastErr = msg
 			}
 			time.Sleep(p.backoff)
@@ -127,8 +144,10 @@ func (p *Pipeline) probeLoop() {
 			}
 			continue
 		}
-		if lastErr != "" {
-			p.Log.Info("-", "zotero", "local API ok")
+		wasDown := lastErr != ""
+		p.setZoteroOK(true)
+		if wasDown {
+			p.Log.Info("-", "zotero", "probe ok; resumed")
 			lastErr = ""
 		}
 		p.backoff = 5 * time.Second
@@ -140,6 +159,16 @@ func (p *Pipeline) process(job Job) {
 	cfg := p.getCfg()
 	path := job.Path
 	p.Log.Info(path, "start", "begin")
+
+	if !p.ZoteroOK() {
+		if _, err := p.Zotero.Probe(); err != nil {
+			p.setZoteroOK(false)
+			p.Log.Warn(path, "zotero", "unavailable; requeue until Zotero is up: "+err.Error())
+			time.AfterFunc(p.backoff, func() { p.Enqueue(job) })
+			return
+		}
+		p.setZoteroOK(true)
+	}
 
 	err := stable.WaitReady(path, stable.Options{
 		Wait:      time.Duration(cfg.System.StableWaitMs) * time.Millisecond,
@@ -167,8 +196,10 @@ func (p *Pipeline) process(job Job) {
 	if serverID == "" {
 		if sid, err := p.Zotero.Probe(); err == nil {
 			serverID = sid
+			p.setZoteroOK(true)
 		} else {
-			p.Log.Warn(path, "zotero", "down; requeue later")
+			p.setZoteroOK(false)
+			p.Log.Warn(path, "zotero", "unavailable; requeue: "+err.Error())
 			time.AfterFunc(p.backoff, func() { p.Enqueue(job) })
 			return
 		}
@@ -351,7 +382,8 @@ func (p *Pipeline) handleZErr(path, stage string, err error, job Job) {
 	}
 	// connectivity
 	if _, perr := p.Zotero.Probe(); perr != nil {
-		p.Log.Warn(path, stage, fmt.Sprintf("%v; requeue", err))
+		p.setZoteroOK(false)
+		p.Log.Warn(path, stage, fmt.Sprintf("%v; zotero unavailable, requeue: %v", err, perr))
 		time.AfterFunc(p.backoff, func() { p.Enqueue(job) })
 		return
 	}
