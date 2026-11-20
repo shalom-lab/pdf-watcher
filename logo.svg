@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" role="img" aria-label="pdf-watcher">
+  <path d="M96 512C220 220 380 160 512 160C644 160 804 220 928 512C804 804 644 864 512 864C380 864 220 804 96 512Z" stroke="#0F766E" stroke-width="100" stroke-linejoin="round"/>
+  <circle cx="512" cy="512" r="148" fill="#E07A5F"/>
+</svg>

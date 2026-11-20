@@ -1,0 +1,12 @@
+pdf-watcher.exe
+*.exe
+*.test
+.idea/
+.vscode/
+*.log
+*.db
+config.yaml
+zotero-collections.csv
+logo-grid.png
+__pycache__/
+*.pyc
