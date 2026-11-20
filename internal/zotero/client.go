@@ -57,12 +57,19 @@ func New(baseURL string) *Client {
 }
 
 func (c *Client) Probe() (serverID string, err error) {
+	// Short timeout: status checks must fail fast when Zotero has quit.
+	httpClient := c.HTTP
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 3 * time.Second}
+	} else {
+		httpClient = &http.Client{Timeout: 3 * time.Second, Transport: httpClient.Transport}
+	}
 	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/", nil)
 	if err != nil {
 		return "", err
 	}
 	c.setCommonHeaders(req, false)
-	resp, err := c.HTTP.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}

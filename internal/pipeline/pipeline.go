@@ -80,6 +80,11 @@ func (p *Pipeline) Paused() bool {
 
 func (p *Pipeline) ZoteroOK() bool { return p.zoteroOK.Load() }
 
+// RefreshZoteroStatus updates reachability without re-entering menu rebuild callbacks.
+func (p *Pipeline) RefreshZoteroStatus(ok bool) {
+	p.zoteroOK.Store(ok)
+}
+
 func (p *Pipeline) setZoteroOK(ok bool) {
 	prev := p.zoteroOK.Swap(ok)
 	if prev == ok {
@@ -151,7 +156,8 @@ func (p *Pipeline) probeLoop() {
 			lastErr = ""
 		}
 		p.backoff = 5 * time.Second
-		time.Sleep(15 * time.Second)
+		// While up, re-check often so quitting Zotero flips status quickly.
+		time.Sleep(5 * time.Second)
 	}
 }
 

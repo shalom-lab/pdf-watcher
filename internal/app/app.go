@@ -141,6 +141,14 @@ func (a *App) rebuildMenu() {
 	}
 	a.menuMu.Lock()
 	defer a.menuMu.Unlock()
+	// Fresh probe so menu/tooltip match reality (closing Zotero window ≠ quit).
+	if a.zc != nil && a.pipe != nil {
+		if _, err := a.zc.Probe(); err != nil {
+			a.pipe.RefreshZoteroStatus(false)
+		} else {
+			a.pipe.RefreshZoteroStatus(true)
+		}
+	}
 	systray.ResetMenu()
 	zoteroOK := a.pipe != nil && a.pipe.ZoteroOK()
 	if zoteroOK {
