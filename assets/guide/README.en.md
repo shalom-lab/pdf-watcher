@@ -43,7 +43,7 @@ If the index already has the same DOI/PMID (or a long normalized title), a new f
 ## FAQ
 
 **Zotero not installed / not running**  
-The tray app still starts (no crash). The menu shows “Zotero: unavailable”; once Zotero 10 is open with local API enabled, status flips to connected.
+Watching continues: new files go into a pending queue (not dropped). When Zotero 10 is up with local API enabled (“Zotero: connected”), the queue flushes automatically.
 
 **Still “connected” after closing the window?**  
 Expected: if Zotero stays in the system tray, Local API (`127.0.0.1:23119`) is still up. Fully **Quit** Zotero from its tray icon; then pdf-watcher will show unavailable.

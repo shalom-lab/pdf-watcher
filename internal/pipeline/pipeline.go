@@ -45,8 +45,10 @@ type Pipeline struct {
 	pausedMu sync.RWMutex
 	paused   bool
 
-	zoteroOK atomic.Bool
-	backoff  time.Duration
+	zoteroOK  atomic.Bool
+	backoff   time.Duration
+	pendingMu sync.Mutex
+	pending   map[string]Job // path -> job; held while Zotero is down
 }
 
 func New(getCfg func() config.Config, log *logx.Logger, idx *index.Store, zc *zotero.Client, res *meta.Resolver, excl stable.ExclusiveOpener) *Pipeline {
@@ -60,6 +62,7 @@ func New(getCfg func() config.Config, log *logx.Logger, idx *index.Store, zc *zo
 		sem:       make(chan struct{}, 2),
 		queue:     make(chan Job, 256),
 		backoff:   5 * time.Second,
+		pending:   map[string]Job{},
 	}
 	go p.loop()
 	go p.probeLoop()
@@ -80,9 +83,12 @@ func (p *Pipeline) Paused() bool {
 
 func (p *Pipeline) ZoteroOK() bool { return p.zoteroOK.Load() }
 
-// RefreshZoteroStatus updates reachability without re-entering menu rebuild callbacks.
+// RefreshZoteroStatus updates reachability without menu callbacks; flushes pending when up.
 func (p *Pipeline) RefreshZoteroStatus(ok bool) {
-	p.zoteroOK.Store(ok)
+	prev := p.zoteroOK.Swap(ok)
+	if ok && !prev {
+		p.flushPending()
+	}
 }
 
 func (p *Pipeline) setZoteroOK(ok bool) {
@@ -90,8 +96,51 @@ func (p *Pipeline) setZoteroOK(ok bool) {
 	if prev == ok {
 		return
 	}
+	if ok {
+		p.flushPending()
+	}
 	if p.OnZoteroReachable != nil {
 		p.OnZoteroReachable(ok)
+	}
+}
+
+// parkPending keeps watching results until Zotero Local API is back.
+func (p *Pipeline) parkPending(job Job) {
+	cfg := p.getCfg()
+	max := cfg.System.MaxQueue
+	if max <= 0 {
+		max = 200
+	}
+	p.pendingMu.Lock()
+	_, existed := p.pending[job.Path]
+	if !existed && len(p.pending) >= max {
+		p.pendingMu.Unlock()
+		p.Log.Error(job.Path, "queue", "pending full; drop")
+		return
+	}
+	p.pending[job.Path] = job
+	n := len(p.pending)
+	p.pendingMu.Unlock()
+	if !existed {
+		p.Log.Infof(job.Path, "queue", "pending until Zotero up (n=%d)", n)
+	}
+}
+
+func (p *Pipeline) flushPending() {
+	p.pendingMu.Lock()
+	if len(p.pending) == 0 {
+		p.pendingMu.Unlock()
+		return
+	}
+	jobs := make([]Job, 0, len(p.pending))
+	for _, j := range p.pending {
+		jobs = append(jobs, j)
+	}
+	p.pending = map[string]Job{}
+	p.pendingMu.Unlock()
+	p.Log.Infof("-", "queue", "Zotero connected; flush pending=%d", len(jobs))
+	for _, j := range jobs {
+		p.enqueueNow(j)
 	}
 }
 
@@ -100,6 +149,15 @@ func (p *Pipeline) Enqueue(job Job) {
 		p.Log.Info(job.Path, "queue", "skipped: global pause")
 		return
 	}
+	// Keep watching even when Zotero is down: park and flush on connect.
+	if !p.ZoteroOK() {
+		p.parkPending(job)
+		return
+	}
+	p.enqueueNow(job)
+}
+
+func (p *Pipeline) enqueueNow(job Job) {
 	cfg := p.getCfg()
 	if len(p.queue) >= cfg.System.MaxQueue {
 		p.Log.Error(job.Path, "queue", "full; drop")
@@ -110,6 +168,7 @@ func (p *Pipeline) Enqueue(job Job) {
 	}
 	select {
 	case p.queue <- job:
+		p.Log.Info(job.Path, "queue", "enqueued")
 	default:
 		p.inflight.Delete(job.Path)
 		p.Log.Error(job.Path, "queue", "full; drop")
@@ -169,8 +228,7 @@ func (p *Pipeline) process(job Job) {
 	if !p.ZoteroOK() {
 		if _, err := p.Zotero.Probe(); err != nil {
 			p.setZoteroOK(false)
-			p.Log.Warn(path, "zotero", "unavailable; requeue until Zotero is up: "+err.Error())
-			time.AfterFunc(p.backoff, func() { p.Enqueue(job) })
+			p.parkPending(job)
 			return
 		}
 		p.setZoteroOK(true)
@@ -205,8 +263,7 @@ func (p *Pipeline) process(job Job) {
 			p.setZoteroOK(true)
 		} else {
 			p.setZoteroOK(false)
-			p.Log.Warn(path, "zotero", "unavailable; requeue: "+err.Error())
-			time.AfterFunc(p.backoff, func() { p.Enqueue(job) })
+			p.parkPending(job)
 			return
 		}
 	}
@@ -386,11 +443,11 @@ func (p *Pipeline) handleZErr(path, stage string, err error, job Job) {
 		p.Log.Error(path, stage, "need Always Allow")
 		return
 	}
-	// connectivity
+	// connectivity — keep file parked until Zotero is back
 	if _, perr := p.Zotero.Probe(); perr != nil {
 		p.setZoteroOK(false)
-		p.Log.Warn(path, stage, fmt.Sprintf("%v; zotero unavailable, requeue: %v", err, perr))
-		time.AfterFunc(p.backoff, func() { p.Enqueue(job) })
+		p.Log.Warn(path, stage, fmt.Sprintf("%v; park until Zotero up: %v", err, perr))
+		p.parkPending(job)
 		return
 	}
 	p.Log.Error(path, stage, err.Error())
