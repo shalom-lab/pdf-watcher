@@ -3,6 +3,7 @@ package index
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -53,7 +54,6 @@ CREATE TABLE IF NOT EXISTS ingest_files (
   pmid TEXT,
   pmcid TEXT,
   title_norm TEXT,
-  family_key TEXT,
   item_key TEXT NOT NULL,
   attachment_key TEXT,
   source TEXT,
@@ -64,16 +64,39 @@ CREATE INDEX IF NOT EXISTS idx_ingest_doi ON ingest_files(server_id, doi);
 CREATE INDEX IF NOT EXISTS idx_ingest_pmid ON ingest_files(server_id, pmid);
 CREATE INDEX IF NOT EXISTS idx_ingest_pmcid ON ingest_files(server_id, pmcid);
 CREATE INDEX IF NOT EXISTS idx_ingest_title ON ingest_files(server_id, title_norm);
-CREATE INDEX IF NOT EXISTS idx_ingest_family ON ingest_files(server_id, family_key);
 CREATE INDEX IF NOT EXISTS idx_ingest_item ON ingest_files(server_id, item_key);
 `)
 	if err != nil {
 		return err
 	}
-	// Older DBs created before family_key — ignore "duplicate column" errors.
-	_, _ = s.db.Exec(`ALTER TABLE ingest_files ADD COLUMN family_key TEXT`)
-	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_ingest_family ON ingest_files(server_id, family_key)`)
-	return nil
+	if err := s.ensureColumn("ingest_files", "family_key", "TEXT"); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_ingest_family ON ingest_files(server_id, family_key)`)
+	return err
+}
+
+func (s *Store) ensureColumn(table, col, typ string) error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		_ = ctype
+		if strings.EqualFold(name, col) {
+			return nil
+		}
+	}
+	_, err = s.db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + col + ` ` + typ)
+	return err
 }
 
 const selectCols = `server_id,file_hash,path,doi,pmid,pmcid,title_norm,IFNULL(family_key,''),item_key,attachment_key,source,ingested_at`
