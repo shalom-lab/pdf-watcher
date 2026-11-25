@@ -27,12 +27,17 @@ func (r *Resolver) ResolveFull(in ResolveInput) Record {
 	front := extract.FrontText(in.Text, 3000)
 	ids := collectIDs(in.Path, in.Text, front)
 
+	fb := func(warn string) Record {
+		rec := FilenameRecordWithText(in.Path, in.Text)
+		rec.DOI, rec.PMID, rec.PMCID = ids.DOI, ids.PMID, ids.PMCID
+		rec.Warn = warn
+		return rec
+	}
+
 	if rec, ok, warn := r.lookupVerified(ids); ok {
 		return rec
 	} else if warn != "" {
-		fb := FilenameRecord(in.Path)
-		fb.DOI, fb.PMID, fb.PMCID = ids.DOI, ids.PMID, ids.PMCID
-		fb.Warn = warn
+		_ = warn
 		// still try AI ids if enabled
 	}
 
@@ -47,10 +52,7 @@ func (r *Resolver) ResolveFull(in ResolveInput) Record {
 				}
 				return rec
 			} else if warn != "" {
-				fb := FilenameRecord(in.Path)
-				fb.DOI, fb.PMID, fb.PMCID = ids.DOI, ids.PMID, ids.PMCID
-				fb.Warn = warn
-				return fb
+				return fb(warn)
 			}
 		}
 	}
@@ -59,17 +61,10 @@ func (r *Resolver) ResolveFull(in ResolveInput) Record {
 	if rec, ok, warn := r.lookupVerified(ids); ok {
 		return rec
 	} else if warn != "" {
-		fb := FilenameRecord(in.Path)
-		fb.DOI, fb.PMID, fb.PMCID = ids.DOI, ids.PMID, ids.PMCID
-		fb.Warn = warn
-		return fb
+		return fb(warn)
 	}
 
-	rec := FilenameRecord(in.Path)
-	rec.DOI = ids.DOI
-	rec.PMID = ids.PMID
-	rec.PMCID = ids.PMCID
-	return rec
+	return fb("")
 }
 
 func collectIDs(path, text, front string) IDs {

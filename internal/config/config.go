@@ -97,7 +97,7 @@ func Default() Config {
 			Enable:     true,
 			APIKey:     "",
 			APIURL:     "https://api.deepseek.com/v1/chat/completions",
-			Model:      "deepseek-chat",
+			Model:      "deepseek-flash", // DeepSeek V4.1-Flash; legacy deepseek-chat retired
 			TimeoutSec: 30,
 		},
 		Zotero: Zotero{

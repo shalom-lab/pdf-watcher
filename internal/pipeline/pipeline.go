@@ -281,13 +281,14 @@ func (p *Pipeline) process(job Job) {
 	}
 
 	ids := meta.MergeIDs(meta.ExtractFrontIDs(ex.Text), meta.ExtractIDsFromPath(path))
-	p.Log.Infof(path, "ids", "doi=%s pmid=%s pmcid=%s", ids.DOI, ids.PMID, ids.PMCID)
-	assocKey := assocLockKey(ids, "")
+	family := meta.FileFamilyKey(path)
+	p.Log.Infof(path, "ids", "doi=%s pmid=%s pmcid=%s family=%s", ids.DOI, ids.PMID, ids.PMCID, family)
+	assocKey := assocLockKey(ids, family)
 	unlock := p.lockKey(assocKey)
 	defer unlock()
 
-	if hit := p.findByIDs(serverID, ids); hit != nil {
-		p.attach(path, hash, hit.ItemKey, meta.Record{DOI: ids.DOI, PMID: ids.PMID, PMCID: ids.PMCID, Source: "index"}, job, serverID)
+	if hit := p.findExisting(serverID, ids, "", family); hit != nil {
+		p.attach(path, hash, hit.ItemKey, meta.Record{DOI: ids.DOI, PMID: ids.PMID, PMCID: ids.PMCID, Source: "index"}, job, serverID, family)
 		return
 	}
 
@@ -309,10 +310,13 @@ func (p *Pipeline) process(job Job) {
 	titleNorm := ""
 	if meta.CanMatchByTitle(rec.Title, rec.Source) {
 		titleNorm = meta.NormalizeTitle(rec.Title)
-		if hit, _ := p.Index.FindByTitleNorm(serverID, titleNorm); hit != nil {
-			p.attach(path, hash, hit.ItemKey, rec, job, serverID)
-			return
-		}
+	}
+	if family == "" {
+		family = meta.IndexFamilyKey(path, rec.Title)
+	}
+	if hit := p.findExisting(serverID, ids, titleNorm, family); hit != nil {
+		p.attach(path, hash, hit.ItemKey, rec, job, serverID, family)
+		return
 	}
 
 	// create new
@@ -339,9 +343,9 @@ func (p *Pipeline) process(job Job) {
 	_ = p.Index.Insert(index.Record{
 		ServerID: serverID, FileHash: hash, Path: path,
 		DOI: rec.DOI, PMID: rec.PMID, PMCID: rec.PMCID,
-		TitleNorm: titleNorm, ItemKey: parentKey, AttachmentKey: attKey, Source: rec.Source,
+		TitleNorm: titleNorm, FamilyKey: family, ItemKey: parentKey, AttachmentKey: attKey, Source: rec.Source,
 	})
-	p.Log.Infof(path, "done", "action=create item=%s att=%s source=%s coll=%s", parentKey, attKey, rec.Source, coll)
+	p.Log.Infof(path, "done", "action=create item=%s att=%s source=%s coll=%s family=%s", parentKey, attKey, rec.Source, coll, family)
 }
 
 func (p *Pipeline) resolveCollection(job Job, cfg config.Config) (string, error) {
@@ -375,7 +379,7 @@ func (p *Pipeline) resolveCollection(job Job, cfg config.Config) (string, error)
 	return cfg.Zotero.DefaultCollectionID, nil
 }
 
-func (p *Pipeline) attach(path, hash, parentKey string, rec meta.Record, job Job, serverID string) {
+func (p *Pipeline) attach(path, hash, parentKey string, rec meta.Record, job Job, serverID, family string) {
 	if coll, err := p.resolveCollection(job, p.getCfg()); err == nil && coll != "" {
 		_ = p.Zotero.AddItemToCollection(parentKey, coll)
 	}
@@ -399,15 +403,18 @@ func (p *Pipeline) attach(path, hash, parentKey string, rec meta.Record, job Job
 	if meta.CanMatchByTitle(rec.Title, rec.Source) {
 		titleNorm = meta.NormalizeTitle(rec.Title)
 	}
+	if family == "" {
+		family = meta.IndexFamilyKey(path, rec.Title)
+	}
 	_ = p.Index.Insert(index.Record{
 		ServerID: serverID, FileHash: hash, Path: path,
 		DOI: rec.DOI, PMID: rec.PMID, PMCID: rec.PMCID,
-		TitleNorm: titleNorm, ItemKey: parentKey, AttachmentKey: attKey, Source: rec.Source,
+		TitleNorm: titleNorm, FamilyKey: family, ItemKey: parentKey, AttachmentKey: attKey, Source: rec.Source,
 	})
-	p.Log.Infof(path, "done", "action=attach item=%s att=%s source=%s", parentKey, attKey, rec.Source)
+	p.Log.Infof(path, "done", "action=attach item=%s att=%s source=%s family=%s", parentKey, attKey, rec.Source, family)
 }
 
-func (p *Pipeline) findByIDs(serverID string, ids meta.IDs) *index.Record {
+func (p *Pipeline) findExisting(serverID string, ids meta.IDs, titleNorm, family string) *index.Record {
 	if ids.DOI != "" {
 		if r, _ := p.Index.FindByDOI(serverID, ids.DOI); r != nil {
 			return r
@@ -420,6 +427,16 @@ func (p *Pipeline) findByIDs(serverID string, ids meta.IDs) *index.Record {
 	}
 	if ids.PMCID != "" {
 		if r, _ := p.Index.FindByPMCID(serverID, ids.PMCID); r != nil {
+			return r
+		}
+	}
+	if family != "" {
+		if r, _ := p.Index.FindByFamilyKey(serverID, family); r != nil {
+			return r
+		}
+	}
+	if titleNorm != "" {
+		if r, _ := p.Index.FindByTitleNorm(serverID, titleNorm); r != nil {
 			return r
 		}
 	}
@@ -453,7 +470,7 @@ func (p *Pipeline) handleZErr(path, stage string, err error, job Job) {
 	p.Log.Error(path, stage, err.Error())
 }
 
-func assocLockKey(ids meta.IDs, titleNorm string) string {
+func assocLockKey(ids meta.IDs, family string) string {
 	if ids.DOI != "" {
 		return "doi:" + ids.DOI
 	}
@@ -463,8 +480,8 @@ func assocLockKey(ids meta.IDs, titleNorm string) string {
 	if ids.PMCID != "" {
 		return "pmcid:" + ids.PMCID
 	}
-	if titleNorm != "" {
-		return "title:" + titleNorm
+	if family != "" {
+		return "fam:" + family
 	}
 	return "path"
 }

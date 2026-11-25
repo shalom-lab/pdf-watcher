@@ -15,6 +15,7 @@ func TestInsertAndFind(t *testing.T) {
 	r := Record{
 		ServerID: "s1", FileHash: "abc", Path: "a.pdf",
 		DOI: "10.1/x", TitleNorm: "hello world title long enough",
+		FamilyKey: "pii:S2542519626000616",
 		ItemKey: "ITEM1", AttachmentKey: "ATT1", Source: "crossref",
 	}
 	if err := s.Insert(r); err != nil {
@@ -27,5 +28,9 @@ func TestInsertAndFind(t *testing.T) {
 	got, _ = s.FindByHash("s1", "abc")
 	if got == nil {
 		t.Fatal("hash miss")
+	}
+	got, _ = s.FindByFamilyKey("s1", "pii:S2542519626000616")
+	if got == nil || got.ItemKey != "ITEM1" {
+		t.Fatal("family miss")
 	}
 }

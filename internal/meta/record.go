@@ -25,3 +25,17 @@ func FilenameRecord(path string) Record {
 		Source: "filename",
 	}
 }
+
+// FilenameRecordWithText uses PDF/DOCX front text when the filename title is weak (e.g. "263").
+func FilenameRecordWithText(path, text string) Record {
+	title := TitleFromFilename(path)
+	if WeakFilenameTitle(title) {
+		if t := TitleFromText(text); t != "" {
+			title = t
+		}
+	}
+	return Record{
+		Title:  title,
+		Source: "filename",
+	}
+}

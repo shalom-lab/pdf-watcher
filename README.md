@@ -58,7 +58,7 @@ ai:
   enable: true
   apiKey: ""
   apiUrl: https://api.deepseek.com/v1/chat/completions
-  model: deepseek-chat
+  model: deepseek-flash
   timeoutSec: 30
 ```
 
